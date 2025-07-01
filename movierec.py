@@ -2,19 +2,28 @@ import streamlit as st
 import requests
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
+import os
+import urllib.request
+import zipfile
 
-# ---- Load Data ----
+DATA_URL = "http://files.grouplens.org/datasets/movielens/ml-100k.zip"
+DATA_DIR = "ml-100k"
+
 @st.cache_data
 def load_data():
-    ratings = pd.read_csv("ml-100k/u.data", sep="\t", names=['user_id','movie_id','rating','timestamp'])
-    movies = pd.read_csv("ml-100k/u.item", sep="|", encoding='latin-1', names=[
-        'movie_id', 'title', 'release_date', 'video_release_date', 'IMDb_URL',
+    # Download dataset if not already present
+    if not os.path.exists(DATA_DIR):
+        zip_path = "ml-100k.zip"
+        urllib.request.urlretrieve(DATA_URL, zip_path)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall()
+    ratings = pd.read_csv(f"{DATA_DIR}/u.data", sep="\t", names=['user_id','movie_id','rating','timestamp'])
+    movies = pd.read_csv(f"{DATA_DIR}/u.item", sep="|", encoding='latin-1', names=['movie_id', 'title', 'release_date', 'video_release_date', 'IMDb_URL',
         'unknown', 'Action', 'Adventure', 'Animation', 'Children', 'Comedy',
         'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror',
         'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western'])
     return ratings, movies
 
-# ---- Prepare Matrix and Similarity ----
 @st.cache_data
 def prepare_data(ratings, movies):
     data = pd.merge(ratings, movies[['movie_id', 'title']], on='movie_id')
@@ -24,8 +33,6 @@ def prepare_data(ratings, movies):
     similarity_df = pd.DataFrame(similarity, index=movie_user_matrix.index, columns=movie_user_matrix.index)
     return user_matrix, similarity_df
 
-# ---- Fetch Poster & Info from OMDb ----
-@st.cache_data(show_spinner=False)
 def fetch_movie_info(title, api_key):
     url = f"http://www.omdbapi.com/?t={title}&apikey={api_key}"
     response = requests.get(url)
@@ -40,10 +47,8 @@ def fetch_movie_info(title, api_key):
         'plot': data.get('Plot')
     }
 
-# ---- API Key ----
-api_key = 'e050f40c'  # Replace with your real OMDb API key
+api_key = 'e050f40c'
 
-# ---- Streamlit App ----
 st.title("🎬 Movie Recommender")
 
 ratings, movies = load_data()
@@ -54,19 +59,18 @@ movie = st.selectbox("Select a Movie:", options=user_matrix.columns)
 if movie:
     st.write(f"Top 10 movies similar to **{movie}**:")
     sim_scores = similarity_df[movie].sort_values(ascending=False)[1:11]
-
     for i, (title, score) in enumerate(sim_scores.items(), 1):
         st.markdown(f"### {i}. {title} ({score:.3f})")
-        clean_title=title.split("(")[0]
-        info = fetch_movie_info(title, api_key)
-        if info:
-            if info['poster'] and info['poster'] != "N/A":
-                st.image(info['poster'], width=150)
-            if info['plot']:
-                st.write(f"**Plot:** {info['plot']}")
-            if info['year']:
-                st.write(f"**Year:** {info['year']}")
-        else:
-            st.write("_Details not available._")
-
-        st.markdown("---")
+    
+    info = fetch_movie_info(movie, api_key)
+    if info:
+        if info['poster'] and info['poster'] != "N/A":
+            st.image(info['poster'], width=150)
+        if info['plot']:
+            st.write(f"**Plot:** {info['plot']}")
+        if info['year']:
+            st.write(f"**Year:** {info['year']}")
+    else:
+        st.write("_Details not available._")
+    
+    st.markdown("---")
