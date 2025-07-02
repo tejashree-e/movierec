@@ -1,24 +1,18 @@
 import streamlit as st
 import requests
 import pandas as pd
+from urllib.parse import quote
 from sklearn.metrics.pairwise import cosine_similarity
-import os
-import urllib.request
-import zipfile
 
-DATA_URL = "http://files.grouplens.org/datasets/movielens/ml-100k.zip"
-DATA_DIR = "ml-100k"
+genre_columns = ['unknown', 'Action', 'Adventure', 'Animation', 'Children', 'Comedy',
+                 'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror',
+                 'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western']
 
 @st.cache_data
 def load_data():
-    # Download dataset if not already present
-    if not os.path.exists(DATA_DIR):
-        zip_path = "ml-100k.zip"
-        urllib.request.urlretrieve(DATA_URL, zip_path)
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall()
-    ratings = pd.read_csv(f"{DATA_DIR}/u.data", sep="\t", names=['user_id','movie_id','rating','timestamp'])
-    movies = pd.read_csv(f"{DATA_DIR}/u.item", sep="|", encoding='latin-1', names=['movie_id', 'title', 'release_date', 'video_release_date', 'IMDb_URL',
+    ratings = pd.read_csv("ml-100k/u.data", sep="\t", names=['user_id','movie_id','rating','timestamp'])
+    movies = pd.read_csv("ml-100k/u.item", sep="|", encoding='latin-1', names=[
+        'movie_id', 'title', 'release_date', 'video_release_date', 'IMDb_URL',
         'unknown', 'Action', 'Adventure', 'Animation', 'Children', 'Comedy',
         'Crime', 'Documentary', 'Drama', 'Fantasy', 'Film-Noir', 'Horror',
         'Musical', 'Mystery', 'Romance', 'Sci-Fi', 'Thriller', 'War', 'Western'])
@@ -34,7 +28,9 @@ def prepare_data(ratings, movies):
     return user_matrix, similarity_df
 
 def fetch_movie_info(title, api_key):
-    url = f"http://www.omdbapi.com/?t={title}&apikey={api_key}"
+    base_title = title.split(" (")[0]
+    encoded_title = quote(base_title)
+    url = f"http://www.omdbapi.com/?t={encoded_title}&apikey={api_key}"
     response = requests.get(url)
     if response.status_code != 200:
         return None
@@ -47,30 +43,66 @@ def fetch_movie_info(title, api_key):
         'plot': data.get('Plot')
     }
 
-api_key = 'e050f40c'
-
-st.title("🎬 Movie Recommender")
+api_key = 'eac0b877'
 
 ratings, movies = load_data()
 user_matrix, similarity_df = prepare_data(ratings, movies)
 
-movie = st.selectbox("Select a Movie:", options=user_matrix.columns)
+st.subheader("Rate some movies you like:")
+movies_to_rate = st.multiselect("Select movies to rate", options=user_matrix.columns, max_selections=5)
+
+user_ratings = {}
+for movie in movies_to_rate:
+    rating = st.slider(f"Rate '{movie}'", 1, 5, 3)
+    user_ratings[movie] = rating
+
+if user_ratings:
+    st.write("Thanks for rating!")
+
+st.title("Movie Recommender")
+
+selected_genres = st.multiselect("Filter by genre(s):", options=genre_columns)
+
+# Start with all movies
+filtered_movies = movies
+if selected_genres:
+    genre_filter = movies[selected_genres].sum(axis=1) > 0
+    filtered_movies = movies[genre_filter]
+
+filtered_titles = filtered_movies['title'].values.tolist()
+
+search_term = st.text_input("Search for a movie:")
+
+# Filter filtered_titles further by search term
+if search_term:
+    filtered_titles = [m for m in filtered_titles if search_term.lower() in m.lower()]
+
+if filtered_titles:
+    movie = st.selectbox("Select a Movie:", options=filtered_titles)
+else:
+    st.write("No movies found matching your criteria.")
+    movie = None
 
 if movie:
     st.write(f"Top 10 movies similar to **{movie}**:")
     sim_scores = similarity_df[movie].sort_values(ascending=False)[1:11]
     for i, (title, score) in enumerate(sim_scores.items(), 1):
         st.markdown(f"### {i}. {title} ({score:.3f})")
-    
-    info = fetch_movie_info(movie, api_key)
-    if info:
-        if info['poster'] and info['poster'] != "N/A":
-            st.image(info['poster'], width=150)
-        if info['plot']:
-            st.write(f"**Plot:** {info['plot']}")
-        if info['year']:
-            st.write(f"**Year:** {info['year']}")
-    else:
-        st.write("_Details not available._")
-    
-    st.markdown("---")
+
+        info = fetch_movie_info(title, api_key)
+        if info:
+            poster_url = info.get('poster')
+            if poster_url and poster_url != "N/A":
+                poster_url = poster_url.replace("http://", "https://")
+                st.image(poster_url, width=150)
+            else:
+                st.write("_Poster not available_")
+
+            if info.get('plot'):
+                st.write(f"**Plot:** {info['plot']}")
+            if info.get('year'):
+                st.write(f"**Year:** {info['year']}")
+        else:
+            st.write("_Details not available or API limit reached._")
+
+        st.markdown("---")
